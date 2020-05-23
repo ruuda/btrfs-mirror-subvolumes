@@ -1,3 +1,4 @@
+extern crate libc;
 extern crate walkdir;
 
 use std::cmp;
@@ -8,6 +9,7 @@ use std::fs;
 use std::io;
 use std::io::BufRead;
 use std::mem;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -186,6 +188,33 @@ fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Diff> {
         adds: adds,
     };
     Ok(result)
+}
+
+/// Call the FICLONE ioctl to make dst a reflinked copy of src.
+fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
+    // Not documented in "man ioctl_list", and in the header the constant is
+    // constructed through a pile of preprocessor macros, but we can get the
+    // raw constant by printf-ing it from a simple C program:
+    //
+    // #include <stdio.h>
+    // #include </usr/include/linux/fs.h>
+    //
+    // int main() {
+    //   printf("%x", FICLONE);
+    //   return 0;
+    // }
+    const FICLONE: u64 = 0x40049409;
+    let result = unsafe {
+        libc::ioctl(
+            dst.as_raw_fd(),
+            FICLONE,
+            src.as_raw_fd(),
+        )
+    };
+    match result {
+        -1 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
+    }
 }
 
 fn main() -> io::Result<()> {
