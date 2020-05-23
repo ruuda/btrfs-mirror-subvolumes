@@ -1,14 +1,12 @@
 extern crate libc;
 extern crate walkdir;
 
-use std::cmp;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::env;
 use std::fs;
-use std::io::BufRead;
+use std::ffi::OsString;
 use std::io;
-use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -27,27 +25,33 @@ struct CopyFile {
 }
 
 struct DirScan {
-    dir_path: PathBuf,
-    entries: HashMap<FileInfo, Vec<PathBuf>>,
+    entries_size_mtime: HashMap<FileInfo, Vec<PathBuf>>,
+    entries_size: HashMap<u64, Vec<PathBuf>>,
+    entries_name: HashMap<OsString, Vec<PathBuf>>,
 }
 
 impl DirScan {
-    fn prefix_path<P: AsRef<Path>>(&self, path: P) -> PathBuf {
-        let mut result = self.dir_path.clone();
-        result.push(path);
-        result
-    }
-
-    /// Move the entries out, replacing the inner hashmap with an empty one.
-    fn take_entries(&mut self) -> HashMap<FileInfo, Vec<PathBuf>> {
-        let mut result = HashMap::new();
-        mem::swap(&mut result, &mut self.entries);
-        result
+    fn get(&self, path: &Path, info: &FileInfo) -> Option<&[PathBuf]> {
+        if let Some(paths) = self.entries_size_mtime.get(info) {
+            return Some(&paths[..]);
+        }
+        if let Some(paths) = self.entries_size.get(&info.len) {
+            return Some(&paths[..]);
+        }
+        if let Some(fname) = path.file_name() {
+            if let Some(paths) = self.entries_name.get(fname) {
+                return Some(&paths[..]);
+            }
+        }
+        None
     }
 }
 
 fn scan_dir<P: AsRef<Path>>(dir_path: P) -> io::Result<DirScan> {
-    let mut entries: HashMap<FileInfo, Vec<PathBuf>> = HashMap::new();
+    let mut entries_size_mtime: HashMap<FileInfo, Vec<PathBuf>> = HashMap::new();
+    let mut entries_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
+    let mut entries_name: HashMap<OsString, Vec<PathBuf>> = HashMap::new();
+
     let wd = walkdir::WalkDir::new(&dir_path)
         .max_open(128)
         .same_file_system(true);
@@ -66,16 +70,34 @@ fn scan_dir<P: AsRef<Path>>(dir_path: P) -> io::Result<DirScan> {
             Ok(p) => p.to_path_buf(),
             Err(e) => panic!("Dir entry is not inside root? {:?}", e),
         };
+        let fname = match full_path.file_name() {
+            Some(name) => name.to_os_string(),
+            None => panic!("Expected file in directory to have a file name."),
+        };
 
-        match entries.entry(file_info) {
+        match entries_size_mtime.entry(file_info) {
+            Entry::Occupied(mut e) => { e.get_mut().push(rel_path.clone()); }
+            Entry::Vacant(e) => { e.insert(vec![rel_path.clone()]); }
+        };
+        match entries_size.entry(len) {
+            Entry::Occupied(mut e) => { e.get_mut().push(rel_path.clone()); }
+            Entry::Vacant(e) => { e.insert(vec![rel_path.clone()]); }
+        };
+        match entries_name.entry(fname) {
             Entry::Occupied(mut e) => { e.get_mut().push(rel_path); }
             Entry::Vacant(e) => { e.insert(vec![rel_path]); }
         };
     }
 
+    // Sort entries to ensure reproducible results.
+    for (_, ref mut v) in entries_size_mtime.iter_mut() { v.sort(); }
+    for (_, ref mut v) in entries_size.iter_mut() { v.sort(); }
+    for (_, ref mut v) in entries_name.iter_mut() { v.sort(); }
+
     let result = DirScan {
-        dir_path: dir_path.as_ref().to_path_buf(),
-        entries: entries,
+        entries_size_mtime,
+        entries_size,
+        entries_name,
     };
 
     Ok(result)
@@ -85,10 +107,12 @@ fn scan_dir<P: AsRef<Path>>(dir_path: P) -> io::Result<DirScan> {
 fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Vec<CopyFile>> {
     let mut copies = Vec::new();
 
-    for (info, mut paths) in target.take_entries().drain() {
+    for (info, mut paths) in target.entries_size_mtime.drain() {
         for path in paths.drain(..) {
-            match base.entries.get(&info) {
-                None => continue,
+            match base.get(&path, &info) {
+                None => {
+                    println!("MISSING {:?}", path);
+                },
                 Some(ref base_paths) => {
                     if base_paths.contains(&path) {
                         // Already there with the same size and mtime, we
@@ -141,6 +165,17 @@ fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
         -1 => Err(io::Error::last_os_error()),
         _ => Ok(()),
     }
+}
+
+fn clone_paths(src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    let parent = dst.parent().expect("Destination should be a subdirectory, so it has a parent.");
+    fs::create_dir_all(parent)?;
+    println!("open src: {:?}", src);
+    let f_src = fs::File::open(src)?;
+    println!("open dst: {:?}", dst);
+    let f_dst = fs::File::create(dst)?;
+    println!("clone");
+    clone_file(&f_src, &f_dst)
 }
 
 const USAGE: &'static str = r#"btrfs-snapsync: Replay likely moves as reflink copies.
@@ -198,7 +233,12 @@ fn main() -> io::Result<()> {
         if dry_run {
             println!("{:?} -> {:?}", copy.src, copy.dst);
         } else {
-            println!("TODO: For real. {:?} -> {:?}", copy.src, copy.dst);
+            let mut src_path = dir_base_dst.clone();
+            let mut dst_path = dir_target_dst.clone();
+            src_path.push(&copy.src);
+            dst_path.push(&copy.dst);
+            println!("{:?} -> {:?}", src_path, dst_path);
+            clone_paths(src_path, dst_path)?;
         }
     }
 
