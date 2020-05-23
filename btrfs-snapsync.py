@@ -32,11 +32,12 @@ in time.
 This command might need to run as superuser.
 """
 
+import datetime
 import os
 import os.path
-import sys
-import datetime
 import subprocess
+import sys
+import time
 
 from datetime import date
 from typing import Optional, List, Set, Tuple
@@ -106,7 +107,6 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
     num_days, base_date, sync_date = best_candidate
     base_dir = base_date.isoformat()
     sync_dir = sync_date.isoformat()
-
     print(f'Syncing {sync_dir}, using {base_dir} as base.')
 
     # Create a writeable snapshot of the base subvolume.
@@ -116,6 +116,30 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
         os.path.join(dst, sync_dir),
     ]
     run(cmd, dry_run=dry_run)
+
+    print('Waiting for sync of snapshot.')
+    # Previously I used "btrfs subvolume sync" instead of "filesystem sync",
+    # but that sync process reliably got stuck in an endless ioctl loop where
+    # it would call clock_nanosleep to sleep for a second and then a
+    # BTRFS_IOC_TREE_SEARCH ioctl, over and over again. A filesystem sync is
+    # less buggy.
+    cmd_sync = [
+        'btrfs', 'filesystem', 'sync',
+        os.path.join(dst, sync_dir),
+    ]
+    sleep_seconds = 1.0
+    time.sleep(sleep_seconds)
+    run(cmd_sync, dry_run=dry_run)
+
+    cmd = [
+        'target/release/btrfs-snapsync',
+        'dry-run' if dry_run else 'apply',
+        os.path.join(src, base_dir),
+        os.path.join(src, sync_dir),
+        os.path.join(dst, base_dir),
+        os.path.join(dst, sync_dir),
+    ]
+    subprocess.run(cmd, check=True)
 
     # Sync into it.
     # Would be nice to use reflink support once that gets mainstream.
@@ -128,10 +152,10 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
         '--preallocate',
         '--no-whole-file',
         '--fuzzy', '--fuzzy',
-        # In absence of reflink support for rsync, use hardlinks instead, the
-        # file tree is immutable anyway.
-        '--link-dest', os.path.join(dst, base_dir),
-        '--info=progress2',
+        # NOTE: Compare dest causes unmodified files to be silently deleted,
+        # don't use it!
+        # '--compare-dest', os.path.join(dst, base_dir),
+        '--info=copy,del,name1,progress2,stats2',
         os.path.join(src, sync_dir) + '/',
         os.path.join(dst, sync_dir),
     ]
@@ -145,6 +169,7 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
         'ro', 'true',
     ]
     run(cmd, dry_run=dry_run)
+    run(cmd_sync, dry_run=dry_run)
 
     return sync_date
 
