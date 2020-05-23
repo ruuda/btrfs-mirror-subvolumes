@@ -111,7 +111,7 @@ fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Vec<CopyFile>> {
         for path in paths.drain(..) {
             match base.get(&path, &info) {
                 None => {
-                    println!("MISSING {:?}", path);
+                    println!("Target without base: {:?}", path);
                 },
                 Some(ref base_paths) => {
                     if base_paths.contains(&path) {
@@ -170,11 +170,8 @@ fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
 fn clone_paths(src: PathBuf, dst: PathBuf) -> io::Result<()> {
     let parent = dst.parent().expect("Destination should be a subdirectory, so it has a parent.");
     fs::create_dir_all(parent)?;
-    println!("open src: {:?}", src);
     let f_src = fs::File::open(src)?;
-    println!("open dst: {:?}", dst);
     let f_dst = fs::File::create(dst)?;
-    println!("clone");
     clone_file(&f_src, &f_dst)
 }
 
