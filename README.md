@@ -41,7 +41,7 @@ subdirectory or subvolume.
             ├── 2020-01-03
             └── etc.
 
- * We want `/fs2/snapshots` have the same contents as `/fs1/snapshots`.
+ * We want `/fs2/snapshots` to have the same contents as `/fs1/snapshots`.
 
  * We want `/fs2` to have roughly the same size as `/fs1`. The snapshots under
    `/fs1` have been created incrementally, so they share most of their extents.
