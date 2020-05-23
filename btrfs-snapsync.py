@@ -151,10 +151,7 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
         '--inplace',
         '--preallocate',
         '--no-whole-file',
-        '--fuzzy', '--fuzzy',
-        # NOTE: Compare dest causes unmodified files to be silently deleted,
-        # don't use it!
-        # '--compare-dest', os.path.join(dst, base_dir),
+        '--fuzzy',
         '--info=copy,del,name1,progress2,stats2',
         os.path.join(src, sync_dir) + '/',
         os.path.join(dst, sync_dir),
