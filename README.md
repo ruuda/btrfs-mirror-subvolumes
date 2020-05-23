@@ -13,6 +13,7 @@ The tool in this repository facilitates the third point.
  * [Motivation](#motivation)
  * [Implementation](#implementation)
  * [Alternatives](#alternatives)
+ * [License](#license)
 
 ## Usage
 
@@ -92,7 +93,6 @@ mutation of that file in a subsequently synced snapshot will necessarily create
 more extents for the changed parts.) At least one mirrored snapshot must exist
 already.
 
-[rsync-reflink]: https://bugzilla.samba.org/show_bug.cgi?id=10170
 
 ## Alternatives
 
@@ -120,3 +120,13 @@ already.
    a second storage pool with a similar feature set, but implemented differently
    (e.g. ZFS, or XFS on top of LVM and dm-raid) would be a considerable effort
    with its own risks.
+
+## License
+
+Btrfs-mirror-subvolumes is free software licensed under the
+[Apache 2.0][apache2] license. Please do not open an issue if
+you disagree with the choice of license.
+
+[rsync-reflink]: https://bugzilla.samba.org/show_bug.cgi?id=10170
+[apache2]:       https://www.apache.org/licenses/LICENSE-2.0
+[except]:        https://www.gnu.org/licenses/gpl-faq.html#GPLIncompatibleLibs
