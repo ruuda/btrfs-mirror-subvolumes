@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::env;
 use std::fs;
-use std::io;
 use std::io::BufRead;
+use std::io;
 use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::time::SystemTime;
 
 #[derive(Eq, Ord, Debug, Hash, PartialEq, PartialOrd)]
@@ -23,13 +24,6 @@ struct FileInfo {
 struct CopyFile {
     src: PathBuf,
     dst: PathBuf,
-}
-
-#[derive(Eq, Debug, PartialEq)]
-struct Diff {
-    copies: Vec<CopyFile>,
-    deletes: Vec<PathBuf>,
-    adds: Vec<PathBuf>,
 }
 
 struct DirScan {
@@ -87,90 +81,30 @@ fn scan_dir<P: AsRef<Path>>(dir_path: P) -> io::Result<DirScan> {
     Ok(result)
 }
 
-/// Compare the contents of two files which are assumed to have the same size.
-fn are_file_contents_identical<P: AsRef<Path>>(p1: P, p2: P) -> io::Result<bool> {
-    println!("Comparing {:?} vs {:?}", p1.as_ref(), p2.as_ref());
-    let f1 = fs::File::open(p1)?;
-    let f2 = fs::File::open(p2)?;
-    let mut r1 = io::BufReader::new(f1);
-    let mut r2 = io::BufReader::new(f2);
-
-    loop {
-        let b1 = r1.fill_buf()?;
-        let b2 = r2.fill_buf()?;
-
-        // Empty buffer indicates EOF. If we got to the end, and both buffers
-        // are empty at the same time, then all bytes were equal. If one is
-        // empty, then the files were of different sizes, but we should have
-        // checked for that in advance, because there'd be no point comparing
-        // contents then.
-        match (b1.len(), b2.len()) {
-            (0, 0) => return Ok(true),
-            (0, _) => panic!("Comparing contents, but file sizes were different."),
-            (_, 0) => panic!("Comparing contents, but file sizes were different."),
-            (n1, n2) => {
-                let len = cmp::min(n1, n2);
-                if &b1[..len] == &b2[..len] {
-                    r1.consume(len);
-                    r2.consume(len);
-                } else {
-                    return Ok(false);
-                }
-            }
-        }
-    }
-}
-
-fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Diff> {
+/// Detect potentially moved files, and emit a copy operation for each.
+fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Vec<CopyFile>> {
     let mut copies = Vec::new();
-    let mut deletes = Vec::new();
-    let mut adds = Vec::new();
-
-    for (ref info, ref paths) in base.entries.iter() {
-        for path in paths.iter() {
-            match target.entries.get(info) {
-                None => deletes.push(path.clone()),
-                Some(ref target_paths) => {
-                    if target_paths.contains(&path) {
-                        // Still there, nothing to delete.
-                    } else {
-                        deletes.push(path.clone());
-                    }
-                }
-            }
-        }
-    }
 
     for (info, mut paths) in target.take_entries().drain() {
         for path in paths.drain(..) {
             match base.entries.get(&info) {
-                None => adds.push(path),
+                None => continue,
                 Some(ref base_paths) => {
                     if base_paths.contains(&path) {
-                        // Already there with the right size and mtime, we
+                        // Already there with the same size and mtime, we
                         // assume that the file has not changed.
-                        // TODO: Optionally confirm contents.
                     } else {
-                        // Until we confirm that we can copy, we'll assume that
-                        // this is a new file.
-                        adds.push(path);
-
-                        for candidate in base_paths.iter() {
-                            let path = adds.pop().expect("We just pushed so 'adds' is nonempty.");
-                            if are_file_contents_identical(
-                                base.prefix_path(candidate),
-                                target.prefix_path(&path),
-                            )? {
-                                let copy = CopyFile {
-                                    src: candidate.clone(),
-                                    dst: path,
-                                };
-                                copies.push(copy);
-                                break
-                            } else {
-                                adds.push(path);
-                            }
-                        }
+                        // We assume that if there was a file with the same
+                        // size and mtime, the file was moved, so emit a copy
+                        // instruction. We do not check the contents of the
+                        // file, because that is going to be very slow for big
+                        // files. Because the reflink copies are cheap, and this
+                        // is only a heuristic, this is fine.
+                        let copy = CopyFile {
+                            src: base_paths[0].clone(),
+                            dst: path,
+                        };
+                        copies.push(copy);
                     }
                 }
             }
@@ -178,16 +112,8 @@ fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Diff> {
     }
 
     // Ensure the diff is deterministic, independent of hash map order.
-    deletes.sort();
-    adds.sort();
     copies.sort();
-
-    let result = Diff {
-        deletes: deletes,
-        copies: copies,
-        adds: adds,
-    };
-    Ok(result)
+    Ok(copies)
 }
 
 /// Call the FICLONE ioctl to make dst a reflinked copy of src.
@@ -217,23 +143,63 @@ fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
     }
 }
 
+const USAGE: &'static str = r#"btrfs-snapsync: Replay likely moves as reflink copies.
+
+Usage:
+    btrfs-snapsync apply   <src-base> <src-target> <dst-base> <dst-target>
+    btrfs-snapsync dry-run <src-base> <src-target> <dst-base> <dst-target>
+
+Diffs the file hierarchy from src-base to src-target, and detects
+potential moves, based on files having the same mtime and size.
+
+For every detected move, create a reflink:
+  * With as source, the base file, but in the destination tree.
+  * With as target, the target file, but in the destination tree.
+
+In other words, this diffs src-base..src-target and replays that diff on
+top of dst-base.
+
+In "apply" mode the reflinks are created. In "dry-run" mode, we print
+which reflinks would be created.
+
+This is only a heuristic, but it sets up reflink sharing where possible,
+and rsync can later fix everything up (metadata, changed files, new and
+deleted files, etc.). When using rsync by itself, it would try to copy
+the file, destroying potential sharing.
+"#;
+
 fn main() -> io::Result<()> {
-    let dir_base = env::args().nth(1).unwrap();
-    let dir_target = env::args().nth(2).unwrap();
-
-    let entries_base = scan_dir(&dir_base)?;
-    let entries_target = scan_dir(&dir_target)?;
-
-    let diff = diff(&entries_base, entries_target)?;
-
-    for copy in diff.copies.iter() {
-        println!("C {:?} -> {:?}", copy.src, copy.dst);
+    if env::args().len() < 6 {
+        println!("{}", USAGE);
+        process::exit(1);
     }
-    for del in diff.deletes.iter() {
-        println!("D {:?}", del);
-    }
-    for add in diff.adds.iter() {
-        println!("A {:?}", add);
+
+    let dry_run = match &env::args().nth(1).unwrap()[..] {
+        "dry-run" => true,
+        "apply" => false,
+        _ => {
+            println!("{}", USAGE);
+            process::exit(1);
+        }
+    };
+
+    let dir_base_src = env::args().nth(2).unwrap();
+    let dir_target_src = env::args().nth(3).unwrap();
+
+    let dir_base_dst = PathBuf::from(env::args().nth(4).unwrap());
+    let dir_target_dst = PathBuf::from(env::args().nth(5).unwrap());
+
+    let entries_base = scan_dir(&dir_base_src)?;
+    let entries_target = scan_dir(&dir_target_src)?;
+
+    let copies = diff(&entries_base, entries_target)?;
+
+    for copy in copies.iter() {
+        if dry_run {
+            println!("{:?} -> {:?}", copy.src, copy.dst);
+        } else {
+            println!("TODO: For real. {:?} -> {:?}", copy.src, copy.dst);
+        }
     }
 
     Ok(())
