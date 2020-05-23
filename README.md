@@ -59,10 +59,10 @@ The second file system is again a btrfs file system, mirrored at the file level
 with rsync. Some custom tooling sets up snapshots and reflinked file copies in
 such a way that a subsequent rsync run can take advantage of sharing.
 
-This procedure mirrors a single subvolume:
+To mirror a single subvolume:
 
- * When mirroring a snapshot, pick a base snapshot to start from, and `btrfs
-   subvolume snapshot` it, mutable at first.
+ * Pick a base snapshot to start from, and `btrfs subvolume snapshot` it,
+   mutable at first.
 
  * Run a custom program to heuristically detect renames and similar files
    between the snapshots, and reflink the originals into the new snapshot with
@@ -75,14 +75,13 @@ This procedure mirrors a single subvolume:
 
    * `--inplace` to mutate the target file in place, instead of writing to a
      temporary file and renaming that over the old file when the transfer is
-     complete. This ensures that even with modifications, many extents can
-     remain shared.
+     complete. A new temporary file would not share any extents.
 
    * `--no-whole-file` to enable rsync’s delta algorithm even when the two file
      systems are both local. Writing deltas, rather than rewriting the entire
      file, ensures that the unchanged extents can be shared.
 
-  * After transfer is complete, change the snapshot to read-only.
+  * After transfer is complete, make the snapshot read-only.
 
 Apart from that, the script drives mirroring all subvolumes until the two file
 systems are in sync. It picks the nearest existing snapshot as a base, with a

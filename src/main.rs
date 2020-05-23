@@ -31,6 +31,9 @@ struct CopyFile {
     dst: PathBuf,
 }
 
+/// All files found recursively, grouped by mtime, size, and file path leaf.
+///
+/// The pathbufs are relative to the scanned directory.
 struct DirScan {
     entries_size_mtime: HashMap<FileInfo, Vec<PathBuf>>,
     entries_size: HashMap<u64, Vec<PathBuf>>,
@@ -38,6 +41,11 @@ struct DirScan {
 }
 
 impl DirScan {
+    /// Search for something similar to the given file.
+    ///
+    /// * Prefer a match on both mtime and size.
+    /// * If that is not possible, match on size only.
+    /// * If that is not possible, match on file name (excluding path to it).
     fn get(&self, path: &Path, info: &FileInfo) -> Option<&[PathBuf]> {
         if let Some(paths) = self.entries_size_mtime.get(info) {
             return Some(&paths[..]);
@@ -125,12 +133,13 @@ fn diff(base: &DirScan, mut target: DirScan) -> io::Result<Vec<CopyFile>> {
                         // Already there with the same size and mtime, we
                         // assume that the file has not changed.
                     } else {
-                        // We assume that if there was a file with the same
-                        // size and mtime, the file was moved, so emit a copy
-                        // instruction. We do not check the contents of the
-                        // file, because that is going to be very slow for big
-                        // files. Because the reflink copies are cheap, and this
-                        // is only a heuristic, this is fine.
+                        // We assume that if there was a similar file, the file
+                        // was moved, so emit a copy instruction. We do not
+                        // check the contents of the file, because that is going
+                        // to be very slow for big files. Because the reflink
+                        // copies are cheap to make, we can afford to make one
+                        // to many and overwrite the file later if the heuristic
+                        // was wrong.
                         let copy = CopyFile {
                             src: base_paths[0].clone(),
                             dst: path,
@@ -175,7 +184,9 @@ fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
 }
 
 fn clone_paths(src: PathBuf, dst: PathBuf) -> io::Result<()> {
-    let parent = dst.parent().expect("Destination should be a subdirectory, so it has a parent.");
+    let parent = dst
+        .parent()
+        .expect("Destination should be in a subdirectory, so it has a parent.");
     fs::create_dir_all(parent)?;
     let f_src = fs::File::open(src)?;
     let f_dst = fs::File::create(dst)?;
