@@ -1,0 +1,8 @@
+[package]
+name = "btrfs-snapsync"
+version = "0.0.0"
+authors = ["Ruud van Asseldonk <dev@veniogames.com>"]
+edition = "2018"
+
+[dependencies]
+walkdir = "2.3.1"
