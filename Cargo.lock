@@ -2,7 +2,7 @@
 # It is not intended for manual editing.
 [[package]]
 name = "btrfs-snapsync"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "walkdir 2.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
