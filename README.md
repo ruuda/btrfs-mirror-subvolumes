@@ -28,6 +28,7 @@ mirroring:
     cd /fs2/snapshots
     btrfs subvolume create $DATE
     rsync -a --preallocate --info=progress2 /fs1/snapshots/$DATE/ /fs2/snapshots/$DATE
+    btrfs property set -t subvol /fs2/snapshots/$DATE ro true
 
 Do a dry-run of the script:
 
