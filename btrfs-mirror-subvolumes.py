@@ -41,7 +41,6 @@ import os
 import os.path
 import subprocess
 import sys
-import time
 
 from datetime import date
 from typing import Optional, List, Set, Tuple
@@ -131,8 +130,6 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
         'btrfs', 'filesystem', 'sync',
         os.path.join(dst, sync_dir),
     ]
-    sleep_seconds = 1.0
-    time.sleep(sleep_seconds)
     run(cmd_sync, dry_run=dry_run)
 
     cmd = [
