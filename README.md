@@ -17,7 +17,29 @@ The tool in this repository facilitates the third point.
 
 ## Usage
 
-    TODO
+Build the Rust part with [Cargo][install-rust]:
+
+    cargo build --release
+
+Perform an initial full sync of one snapshot, to use as a base for incremental
+mirroring:
+
+    export DATE=2020-01-01
+    cd /fs2/snapshots
+    btrfs subvolume create $DATE
+    rsync -a --preallocate --info=progress2 /fs1/snapshots/$DATE/ /fs2/snapshots/$DATE
+
+Do a dry-run of the script:
+
+    ./btrfs-mirror-subvolumes.py --dry-run /fs1/snapshots /fs2/snapshots
+
+Sync a single snapshot (the one closest to the base snapshot):
+
+    ./btrfs-mirror-subvolumes.py --single /fs1/snapshots /fs2/snapshots
+
+If everything looks fine in the new snapshot, mirror all of them sequentially:
+
+    ./btrfs-mirror-subvolumes.py /fs1/snapshots /fs2/snapshots
 
 ## Motivation
 
@@ -127,5 +149,6 @@ Btrfs-mirror-subvolumes is free software licensed under the
 you disagree with the choice of license.
 
 [rsync-reflink]: https://bugzilla.samba.org/show_bug.cgi?id=10170
+[install-rust]:  https://forge.rust-lang.org/infra/other-installation-methods.html
 [apache2]:       https://www.apache.org/licenses/LICENSE-2.0
 [except]:        https://www.gnu.org/licenses/gpl-faq.html#GPLIncompatibleLibs
