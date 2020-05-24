@@ -15,7 +15,7 @@ corruption in the event of btrfs bugs.
 
 Usage:
 
-    btrfs-snapsync.py [--dry-run] [--single] <source-dir> <dest-dir>
+    btrfs-mirror-subvolumes.py [--dry-run] [--single] <source-dir> <dest-dir>
 
 Options:
 
@@ -136,7 +136,7 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
     run(cmd_sync, dry_run=dry_run)
 
     cmd = [
-        'target/release/btrfs-snapsync',
+        'target/release/reflink-diff',
         'dry-run' if dry_run else 'apply',
         os.path.join(src, base_dir),
         os.path.join(src, sync_dir),

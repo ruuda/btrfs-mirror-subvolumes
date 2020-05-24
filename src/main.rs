@@ -196,8 +196,8 @@ fn clone_paths(src: PathBuf, dst: PathBuf) -> io::Result<()> {
 const USAGE: &'static str = r#"btrfs-snapsync: Replay likely moves as reflink copies.
 
 Usage:
-    btrfs-snapsync apply   <src-base> <src-target> <dst-base> <dst-target>
-    btrfs-snapsync dry-run <src-base> <src-target> <dst-base> <dst-target>
+    reflink-diff apply   <src-base> <src-target> <dst-base> <dst-target>
+    reflink-diff dry-run <src-base> <src-target> <dst-base> <dst-target>
 
 Diffs the file hierarchy from src-base to src-target, and detects
 potential moves, based on files having the same mtime and size.
