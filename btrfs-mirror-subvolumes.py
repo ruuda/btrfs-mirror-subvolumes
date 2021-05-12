@@ -63,7 +63,7 @@ def list_subvolumes(path: str) -> Set[date]:
 
 def date_distance(x: date, y: date) -> int:
     """
-    Return the number of days between x and y if x < y, or twice that if x > y.
+    Return the number of days between x and y if x > y, or twice that if x < y.
     This gives a bias to building backwards, which makes sense because
     subvolumes tend to accumulate growth. Missing files are more likely to be
     present in a future snapshot than in a past snapshot.
@@ -100,14 +100,14 @@ def sync_one(src: str, dst: str, *, dry_run: bool) -> Optional[date]:
     if len(missing_subvols) == 0:
         return None
 
-    # Find the missing date closest to an existing date, and the existing date
-    # that it is closest to.
-    transfer_candidates = (
-        (*hausdorff_distance(x, dst_subvols), x)
-        for x in missing_subvols
-    )
-    best_candidate = min(transfer_candidates)
-    num_days, base_date, sync_date = best_candidate
+    # We will sync the *latest* missing subvolume first. The rationale behind
+    # this is that data is mostly append-only, and that we prefer fragmenting
+    # early snapshots over later snapshots. There is no advantage in rebuilding
+    # a file that changed over time in the same order, it will only be
+    # fragmented in the later snapshots. Rather, we can sync the final (or at
+    # least latest) version, and rebuild the past versions backwards.
+    sync_date = max(missing_subvols)
+    num_days, base_date = hausdorff_distance(sync_date, dst_subvols)
     base_dir = base_date.isoformat()
     sync_dir = sync_date.isoformat()
     print(f'Syncing {sync_dir}, using {base_dir} as base.')
