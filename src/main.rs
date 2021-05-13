@@ -44,14 +44,22 @@ impl DirScan {
     /// Search for something similar to the given file.
     ///
     /// * Prefer a match on both mtime and size.
-    /// * If that is not possible, match on size only.
+    /// * If that is not possible, match on size only, if the extension matches.
     /// * If that is not possible, match on file name (excluding path to it).
     fn get(&self, path: &Path, info: &FileInfo) -> Option<&[PathBuf]> {
         if let Some(paths) = self.entries_size_mtime.get(info) {
             return Some(&paths[..]);
         }
         if let Some(paths) = self.entries_size.get(&info.len) {
-            return Some(&paths[..]);
+            // If the size matches, confirm that the extension matches too,
+            // otherwise we get too many unrelated small-ish files matching up.
+            // We return a slice of one in this case, which should be fine,
+            // because we only need one source to copy.
+            for (i, matched_path) in paths.iter().enumerate() {
+                if path.extension() == matched_path.extension() {
+                    return Some(&paths[i..i+1]);
+                }
+            }
         }
         if let Some(fname) = path.file_name() {
             if let Some(paths) = self.entries_name.get(fname) {
@@ -89,6 +97,12 @@ fn scan_dir<P: AsRef<Path>>(dir_path: P) -> io::Result<DirScan> {
             Some(name) => name.to_os_string(),
             None => panic!("Expected file in directory to have a file name."),
         };
+
+        // Do not bother linking up small files, they are more likely to produce
+        // false positive than to result in substantial space savings.
+        if len < 8192 {
+            continue
+        }
 
         match entries_size_mtime.entry(file_info) {
             Entry::Occupied(mut e) => { e.get_mut().push(rel_path.clone()); }
