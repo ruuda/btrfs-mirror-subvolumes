@@ -183,7 +183,7 @@ fn clone_file(src: &fs::File, dst: &fs::File) -> io::Result<()> {
     //   printf("%x", FICLONE);
     //   return 0;
     // }
-    const FICLONE: u64 = 0x40049409;
+    const FICLONE: libc::c_ulong = 0x40049409;
     let result = unsafe {
         libc::ioctl(
             dst.as_raw_fd(),
